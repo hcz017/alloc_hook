@@ -2,13 +2,12 @@
 #include <sys/mman.h>
 #include <sys/param.h>  // powerof2 ---> ((((x) - 1) & (x)) == 0)
 #include <unistd.h>
+#include <sys/stat.h>
 
-#include <android-base/stringprintf.h>
 #include <cstring>
-#include <filesystem>
-#include <fstream>
 #include <string>
 #include <unordered_set>
+#include <android-base/stringprintf.h>
 
 #include "Config.h"
 #include "DebugData.h"
@@ -16,8 +15,6 @@
 #include "debug_disable.h"
 #include "malloc_debug.h"
 
-#include "ion/ion.h"
-#include "ion/ion_4.19.h"
 #include "midgard/mali_kbase_ioctl.h"
 #include "msm_ksgl/msm_ksgl.h"
 
@@ -266,39 +263,52 @@ int debug_posix_memalign(void** memptr, size_t alignment, size_t size) {
 
 namespace DMA_BUF {
 
-int parse_inode(const char* __s) {
-    const char* colon_pos = strchr(__s, ':');
-    int val = 0;
-    if (colon_pos != NULL) {
-        colon_pos++;
-        val = atoi(colon_pos);
-    }
-    return val;
-}
-
 static bool is_dma_buf(int fd) {
-    std::filesystem::path path = "/proc/self/fdinfo/" + std::to_string(fd);
-    std::ifstream file(path);
-    if (!file.is_open())
+    static std::unordered_set<uint64_t> inode_set;
+    std::string fdinfo = android::base::StringPrintf("/proc/self/fdinfo/%d", fd);
+    auto fp = std::unique_ptr<FILE, decltype(&fclose)>{fopen(fdinfo.c_str(), "re"), fclose};
+    if (fp == nullptr) {
         return false;
+    }
 
-    static std::unordered_set<int> inode_set;
-    std::string line;
-    int inode = -1;
-    while (std::getline(file, line)) {
-        if (line.find("ino:") == 0) {
-            inode = parse_inode(line.c_str());
-        }
-
-        if (line.find("exp_name:") == 0 && inode > 0) {
-            if (inode_set.count(inode)) {
-                return false;
-            }
-            inode_set.emplace(inode);
-            return true;
+    bool is_dmabuf_file = false;
+    uint64_t inode = -1;
+    char* line = nullptr;
+    size_t len = 0;
+    while (getline(&line, &len, fp.get()) > 0) {
+        switch (line[0]) {
+            case 'i':
+                if (strncmp(line, "ino:", 4) == 0) {
+                    char* c = line + 4;
+                    inode = strtoull(c, nullptr, 10);
+                }
+                break;
+            case 'e':
+                if (strncmp(line, "exp_name:", 9) == 0) {
+                    is_dmabuf_file = true;
+                }
+                break;
+            default:
+                break;
         }
     }
-    return false;
+
+    if (!is_dmabuf_file) {
+        return false;
+    }
+
+    if (inode == static_cast<uint64_t>(-1)) {
+        // Fallback to stat() on the fd path to get inode number
+        std::string fd_path = android::base::StringPrintf("/proc/self/fd/%d", fd);
+
+        struct stat sb;
+        if (stat(fd_path.c_str(), &sb) < 0) {
+            return false;
+        }
+        inode = sb.st_ino;
+    }
+
+    return inode_set.insert(inode).second;
 }
 
 }  // namespace DMA_BUF
@@ -316,8 +326,7 @@ int debug_ioctl(int fd, unsigned int request, void* arg) {
     static std::unordered_set<unsigned int> req_set = {
         KBASE_IOCTL_MEM_ALLOC_EX,
         KBASE_IOCTL_MEM_ALLOC,
-        IOCTL_KGSL_GPUOBJ_ALLOC,
-        ION_IOC_NEW_ALLOC
+        IOCTL_KGSL_GPUOBJ_ALLOC
     };
 
     if (req_set.count(request)) {
@@ -369,10 +378,6 @@ void* debug_mmap(void* addr, size_t size, int prot, int flags, int fd, off_t off
             g_debug->pointer->Add(result, size, MMAP);
         else if (DMA_BUF::is_dma_buf(fd))
             g_debug->pointer->Add(result, size, DMA);
-        else if (gpu_ioctl_alloc) {
-            gpu_ioctl_alloc = false;  // Reset the flag immediately after processing
-            g_debug->pointer->Add(result, size, DMA);
-        }
     }
 
     return result;
