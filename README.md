@@ -152,7 +152,7 @@ use to get malloc and free backtrace, include dmabuffer by hook `ioctl` and `clo
         task_profiles CameraServiceCapacity MaxPerformance
       ```
   - 使用 `stop camerahalserver` 停止相机服务
-  - 根据第三步的 rc 文件的输出, 重新启动服务, 此时, 可以增加 LD_PRELOAD 抓取堆栈
+  - 根据第三步的 rc 文件的输出, 重新启动服务, 此时, 可以增加 LD_PRELOAD 抓取堆栈, 如果相机服务卡顿严重，建议使用 BACKTRACE_MIN_SIZE 过滤小于 1KB 的内存
     ```
     LD_PRELOAD=liballoc_hook.so LD_LIBRARY_PATH=/path /vendor/bin/hw/camerahalserver
     ```
