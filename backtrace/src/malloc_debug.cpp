@@ -292,6 +292,7 @@ static bool is_dma_buf(int fd) {
                 break;
         }
     }
+    m_sys_free(line);
 
     if (!is_dmabuf_file) {
         return false;
