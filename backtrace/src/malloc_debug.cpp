@@ -3,6 +3,7 @@
 #include <sys/param.h>  // powerof2 ---> ((((x) - 1) & (x)) == 0)
 #include <unistd.h>
 #include <sys/stat.h>
+#include <linux/dma-heap.h>
 
 #include <cstring>
 #include <string>
@@ -334,7 +335,32 @@ int debug_ioctl(int fd, unsigned int request, void* arg) {
         gpu_ioctl_alloc = true;  // Only the calling thread will set this to true
     }
 
-    return (int)syscall(SYS_ioctl, fd, request, arg);
+    int ret = (int)syscall(SYS_ioctl, fd, request, arg);
+    if (g_debug->TrackPointers() && request == DMA_HEAP_IOCTL_ALLOC) {
+        struct dma_heap_allocation_data* heap = (struct dma_heap_allocation_data*)arg;
+        if(DMA_BUF::is_dma_buf(heap->fd)) {
+            void* ptr = reinterpret_cast<void*>(heap->fd);
+            g_debug->pointer->Add(ptr, heap->len, DMA);
+        }
+    }
+
+    return ret;
+}
+
+int debug_close(int fd) {
+    if (DebugCallsDisabled()) {
+        return (int)syscall(SYS_close, fd);
+    }
+
+    ScopedConcurrentLock lock;
+    ScopedDisableDebugCalls disable;
+
+    if (g_debug->TrackPointers()) {
+        void* ptr = reinterpret_cast<void*>(fd);
+        g_debug->pointer->Remove(ptr);
+    }
+
+    return (int)syscall(SYS_close, fd);
 }
 
 void* debug_mmap64(void* addr, size_t size, int prot, int flags, int fd, off_t offset) {
@@ -361,7 +387,7 @@ void* debug_mmap64(void* addr, size_t size, int prot, int flags, int fd, off_t o
 }
 
 void* debug_mmap(void* addr, size_t size, int prot, int flags, int fd, off_t offset) {
-    if (DebugCallsDisabled() || addr != nullptr) {
+    if (DebugCallsDisabled()) {
         return (void*)syscall(SYS_mmap, addr, size, prot, flags, fd, offset);
     }
 
@@ -377,8 +403,10 @@ void* debug_mmap(void* addr, size_t size, int prot, int flags, int fd, off_t off
     if (g_debug->TrackPointers()) {
         if (fd < 0)
             g_debug->pointer->Add(result, size, MMAP);
-        else if (DMA_BUF::is_dma_buf(fd))
-            g_debug->pointer->Add(result, size, DMA);
+        else if (DMA_BUF::is_dma_buf(fd)) {
+            void* ptr = reinterpret_cast<void*>(fd);
+            g_debug->pointer->Add(ptr, size, DMA);
+        }
     }
 
     return result;

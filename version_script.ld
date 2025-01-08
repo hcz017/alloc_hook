@@ -9,6 +9,7 @@ global:
     mmap;
     munmap;
     ioctl;
+    close;
     mmap64;
     checkpoint;
 

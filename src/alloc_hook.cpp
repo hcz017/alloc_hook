@@ -54,6 +54,7 @@ public:
     }
     int munmap(void* addr, size_t size) { return debug_munmap(addr, size); }
     int ioctl(int fd, int request, void* arg) { return debug_ioctl(fd, request, arg); }
+    int close(int fd) { return debug_close(fd); }
     void* mmap64(void* addr, size_t size, int prot, int flags, int fd, off_t offset) {
         return debug_mmap64(addr, size, prot, flags, fd, offset);
     }
@@ -150,6 +151,10 @@ int ioctl(int fd, int request, ...) {
     va_end(ap);
 
     return AllocHook::inst().ioctl(fd, request, arg);
+}
+
+int close(int fd) {
+    return AllocHook::inst().close(fd);
 }
 
 void* mmap64(void* addr, size_t size, int prot, int flags, int fd, off_t offset) {
