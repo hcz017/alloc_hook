@@ -5,6 +5,7 @@ BUILD_ARCH="arm64-v8a"
 if [ -n "$1" ]; then
     BUILD_ARCH=$1
 fi
+USER="alloc_test"
 
 SRC_DIR=$(readlink -f "`dirname $0`")
 cd ${SRC_DIR}
@@ -56,12 +57,33 @@ function cmake_para_gen(){
 function build_sdk(){ 
     rm -rf build
     rm -rf out
+    mkdir build
     mkdir -p out/lib
-    mkdir build && cd build
+    mkdir -p out/bin
 
+    pushd .
+    cd build
     cmake ${CMAKE_PARA} .. 
     ninja install -v
+    popd
 }
 
+function test_func(){
+    adb shell rm -rf /data/local/tmp/trace
+    adb shell mkdir -p /data/local/tmp/trace
+    adb shell rm -rf /data/local/tmp/${USER}
+    adb shell mkdir -p /data/local/tmp/${USER}
+
+    current_dir=$(pwd)
+    adb push --sync ${current_dir}/out/lib/* /data/local/tmp/${USER}
+    adb push --sync ${current_dir}/out/bin/* /data/local/tmp/${USER}
+
+    adb exec-out "cd /data/local/tmp/${USER}; \
+        unset LD_PRELOAD; \
+        export LD_LIBRARY_PATH=.; \
+        chmod 777 ./alloc_hook_test; \
+        LD_PRELOAD=liballoc_hook.so ./alloc_hook_test"
+}
 cmake_para_gen
 build_sdk
+test_func

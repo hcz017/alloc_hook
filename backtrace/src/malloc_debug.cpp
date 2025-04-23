@@ -3,6 +3,7 @@
 #include <sys/param.h>  // powerof2 ---> ((((x) - 1) & (x)) == 0)
 #include <unistd.h>
 #include <sys/stat.h>
+#include <linux/dma-heap.h>
 
 #include <cstring>
 #include <string>
@@ -17,6 +18,7 @@
 
 #include "midgard/mali_kbase_ioctl.h"
 #include "msm_ksgl/msm_ksgl.h"
+#include "mtk_camera/camera_mem.h"
 
 #include "memory_hook.h"
 
@@ -263,7 +265,9 @@ int debug_posix_memalign(void** memptr, size_t alignment, size_t size) {
 
 namespace DMA_BUF {
 
-static bool is_dma_buf(int fd) {
+static thread_local bool gpu_ioctl_alloc = false;  // TLS to store a unique flag per thread
+
+static bool is_dma_buf(int fd, size_t* size) {
     static std::unordered_set<uint64_t> inode_set;
     std::string fdinfo = android::base::StringPrintf("/proc/self/fdinfo/%d", fd);
     auto fp = std::unique_ptr<FILE, decltype(&fclose)>{fopen(fdinfo.c_str(), "re"), fclose};
@@ -283,6 +287,12 @@ static bool is_dma_buf(int fd) {
                     inode = strtoull(c, nullptr, 10);
                 }
                 break;
+            case 's':
+                if (strncmp(line, "size:", 5) == 0) {
+                    char* c = line + 5;
+                    *size = strtoull(c, nullptr, 10);
+                }
+                break;
             case 'e':
                 if (strncmp(line, "exp_name:", 9) == 0) {
                     is_dmabuf_file = true;
@@ -292,6 +302,7 @@ static bool is_dma_buf(int fd) {
                 break;
         }
     }
+    m_sys_free(line);
 
     if (!is_dmabuf_file) {
         return false;
@@ -311,9 +322,35 @@ static bool is_dma_buf(int fd) {
     return inode_set.insert(inode).second;
 }
 
-}  // namespace DMA_BUF
+static bool handle_dma_node(unsigned int request, void* arg, int* fd, size_t* size) {
+    // delay parsing the backtrace until mmap64.
+    auto set_gpu_ioctl_alloc_and_return_false = []() -> bool {
+        gpu_ioctl_alloc = true;
+        return false;
+    };
 
-static thread_local bool gpu_ioctl_alloc = false;  // TLS to store a unique flag per thread
+    switch (request) {
+        case KBASE_IOCTL_MEM_ALLOC:
+        case KBASE_IOCTL_MEM_ALLOC_EX:
+        case IOCTL_KGSL_GPUOBJ_ALLOC:
+            return set_gpu_ioctl_alloc_and_return_false();
+        // parse the backtrace immediately
+        case DMA_HEAP_IOCTL_ALLOC: {
+                struct dma_heap_allocation_data* heap = (struct dma_heap_allocation_data*)arg;
+                *fd = heap->fd;
+            }
+            return is_dma_buf(*fd, size);
+        case CAM_MEM_ION_MAP_PA: {
+                struct CAM_MEM_DEV_ION_NODE_STRUCT* heap = (struct CAM_MEM_DEV_ION_NODE_STRUCT*)arg;
+                *fd = heap->memID;
+            }
+            return is_dma_buf(*fd, size);
+        default:
+            return false;
+    }
+}
+
+}  // namespace DMA_BUF
 
 int debug_ioctl(int fd, unsigned int request, void* arg) {
     if (DebugCallsDisabled()) {
@@ -323,17 +360,32 @@ int debug_ioctl(int fd, unsigned int request, void* arg) {
     ScopedConcurrentLock lock;
     ScopedDisableDebugCalls disable;
 
-    static std::unordered_set<unsigned int> req_set = {
-        KBASE_IOCTL_MEM_ALLOC_EX,
-        KBASE_IOCTL_MEM_ALLOC,
-        IOCTL_KGSL_GPUOBJ_ALLOC
-    };
+    int ret = (int)syscall(SYS_ioctl, fd, request, arg);
 
-    if (req_set.count(request)) {
-        gpu_ioctl_alloc = true;  // Only the calling thread will set this to true
+    int node_fd = -1;
+    size_t node_sz = 0;
+    if (g_debug->TrackPointers() && DMA_BUF::handle_dma_node(request, arg, &node_fd, &node_sz)) {
+        void* ptr = reinterpret_cast<void*>(node_fd);
+        g_debug->pointer->Add(ptr, node_sz, DMA);
     }
 
-    return (int)syscall(SYS_ioctl, fd, request, arg);
+    return ret;
+}
+
+int debug_close(int fd) {
+    if (DebugCallsDisabled()) {
+        return (int)syscall(SYS_close, fd);
+    }
+
+    ScopedConcurrentLock lock;
+    ScopedDisableDebugCalls disable;
+
+    if (g_debug->TrackPointers()) {
+        void* ptr = reinterpret_cast<void*>(fd);
+        g_debug->pointer->Remove(ptr);
+    }
+
+    return (int)syscall(SYS_close, fd);
 }
 
 void* debug_mmap64(void* addr, size_t size, int prot, int flags, int fd, off_t offset) {
@@ -351,8 +403,8 @@ void* debug_mmap64(void* addr, size_t size, int prot, int flags, int fd, off_t o
 
     void* result = (void*)syscall(SYS_mmap, addr, size, prot, flags, fd, offset);
 
-    if (g_debug->TrackPointers() && gpu_ioctl_alloc) {
-        gpu_ioctl_alloc = false;  // Reset the flag immediately after processing
+    if (g_debug->TrackPointers() && DMA_BUF::gpu_ioctl_alloc) {
+        DMA_BUF::gpu_ioctl_alloc = false;  // Reset the flag immediately after processing
         g_debug->pointer->Add(result, size, DMA);
     }
 
@@ -360,7 +412,7 @@ void* debug_mmap64(void* addr, size_t size, int prot, int flags, int fd, off_t o
 }
 
 void* debug_mmap(void* addr, size_t size, int prot, int flags, int fd, off_t offset) {
-    if (DebugCallsDisabled() || addr != nullptr) {
+    if (DebugCallsDisabled()) {
         return (void*)syscall(SYS_mmap, addr, size, prot, flags, fd, offset);
     }
 
@@ -374,10 +426,13 @@ void* debug_mmap(void* addr, size_t size, int prot, int flags, int fd, off_t off
 
     void* result = (void*)syscall(SYS_mmap, addr, size, prot, flags, fd, offset);
     if (g_debug->TrackPointers()) {
+        size_t node_sz = 0;
         if (fd < 0)
             g_debug->pointer->Add(result, size, MMAP);
-        else if (DMA_BUF::is_dma_buf(fd))
-            g_debug->pointer->Add(result, size, DMA);
+        else if (DMA_BUF::is_dma_buf(fd, &node_sz)) {
+            void* ptr = reinterpret_cast<void*>(fd);
+            g_debug->pointer->Add(ptr, node_sz, DMA);
+        }
     }
 
     return result;

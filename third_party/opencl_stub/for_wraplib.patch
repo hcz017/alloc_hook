@@ -1,0 +1,52 @@
+From 2b5f07f2fcfd17e8aeda3c35e8bb3565dbce04f6 Mon Sep 17 00:00:00 2001
+From: zhanghaolong <zhanghaolong@megvii.com>
+Date: Tue, 10 Oct 2023 13:23:30 +0800
+Subject: [PATCH] 1
+
+---
+ src/backends/opencl/opencl_stub/include/MCL/cl.h          | 1 -
+ src/backends/opencl/opencl_stub/include/MCL/cl_ext_qcom.h | 4 ++--
+ src/backends/opencl/opencl_stub/include/MCL/cl_gl_ext.h   | 2 +-
+ 3 files changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/src/backends/opencl/opencl_stub/include/MCL/cl.h b/src/backends/opencl/opencl_stub/include/MCL/cl.h
+index 170fb2a..61f1ae1 100644
+--- a/src/backends/opencl/opencl_stub/include/MCL/cl.h
++++ b/src/backends/opencl/opencl_stub/include/MCL/cl.h
+@@ -163,7 +163,6 @@ typedef struct _cl_image_desc {
+     cl_uint                 num_samples;
+ #ifdef CL_VERSION_2_0
+ #if defined(__GNUC__)
+-    __extension__                   /* Prevents warnings about anonymous union in -pedantic builds */
+ #endif
+ #if defined(_MSC_VER) && !defined(__STDC__)
+ #pragma warning( push )
+diff --git a/src/backends/opencl/opencl_stub/include/MCL/cl_ext_qcom.h b/src/backends/opencl/opencl_stub/include/MCL/cl_ext_qcom.h
+index be37c1e..21e891f 100644
+--- a/src/backends/opencl/opencl_stub/include/MCL/cl_ext_qcom.h
++++ b/src/backends/opencl/opencl_stub/include/MCL/cl_ext_qcom.h
+@@ -7,8 +7,8 @@
+ #define __OPENCL_CL_EXT_QCOM_H
+ 
+ // Needed by cl_khr_egl_event extension
+-#include <EGL/egl.h>
+-#include <EGL/eglext.h>
++//#include <EGL/egl.h>
++//#include <EGL/eglext.h>
+ #include <CL/cl_ext.h>
+ 
+ #ifdef __cplusplus
+diff --git a/src/backends/opencl/opencl_stub/include/MCL/cl_gl_ext.h b/src/backends/opencl/opencl_stub/include/MCL/cl_gl_ext.h
+index 0d6936f..ad3473e 100644
+--- a/src/backends/opencl/opencl_stub/include/MCL/cl_gl_ext.h
++++ b/src/backends/opencl/opencl_stub/include/MCL/cl_gl_ext.h
+@@ -14,5 +14,5 @@
+  * limitations under the License.
+  ******************************************************************************/
+ 
+-#include <CL/cl_gl.h>
++//#include <CL/cl_gl.h>
+ #pragma message("All OpenGL-related extensions have been moved into cl_gl.h.  Please include cl_gl.h directly.")
+-- 
+2.34.1
+

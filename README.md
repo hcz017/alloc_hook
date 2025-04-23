@@ -128,6 +128,37 @@ use to get malloc and free backtrace, include dmabuffer by hook `ioctl` and `clo
 
   ```
 
+* 在线 trace 抓取
+  以相机程序为例：
+  - 首先打开相机，使用 top / ps / pidof / pgrep 查看相机服务进程 id, 相机服务名称一般为 camerahalserver
+  - 查看相机服务的 cmdline 信息, `cat /proc/<pid>/cmdline`
+  - 查看启动命令
+    - 使用 `find -L /system -name "*.rc" | xargs grep "CMDLINE"` 搜索相机服务启动命令, "CMDLINE" 为第二步的输出
+      - 该步骤输出为: "/path/xx.rc", 例如, "/system/vendor/etc/init/camerahalserver.rc"
+    - 使用 `cat /path/xx.rc` 查看启动命令所需的参数，"/path/xx.rc" 为上一步骤的输出, rc 文件的格式如下
+      ```
+      service <name> <pathname> [ <argument> ]*
+       <option>
+       <option>
+      ```
+    如下所示, 启动命令为 /vendor/bin/hw/camerahalserver [或者, `start camerahalserver`], 一般需要在根目录启动服务
+      ```
+      service camerahalserver /vendor/bin/hw/camerahalserver
+        class main
+        user cameraserver
+        group audio camera input drmrpc sdcard_rw system media graphics
+        ioprio rt 4
+        capabilities SYS_NICE
+        task_profiles CameraServiceCapacity MaxPerformance
+      ```
+  - 使用 `stop camerahalserver` 停止相机服务
+  - 根据第三步的 rc 文件的输出, 重新启动服务, 此时, 可以增加 LD_PRELOAD 抓取堆栈, 如果相机服务卡顿严重，建议使用 BACKTRACE_MIN_SIZE 过滤小于 1KB 的内存
+    ```
+    LD_PRELOAD=liballoc_hook.so LD_LIBRARY_PATH=/path /vendor/bin/hw/camerahalserver
+    ```
+  - 在拍照完后, 使用 `kill -33 <pid>` 输出当前时刻的堆栈
+    - 一般返回桌面，等待几秒再调用 kill 命令发送信号，保证相机程序申请的内存已经释放，防止统计错误
+
 * 配置参数意义
   - `backtrace_dump_on_exit_`: 程序退出时，打印堆栈
   - `backtrace_frames_`: 抓取堆栈的最大深度，默认 128
