@@ -37,7 +37,7 @@ typedef void (*checkpoint_func)(const char*);
 namespace Checker {
 
 bool verify_memory_info(const char* file_name, float host_mem, float dma_mem, float tot_mem) {
-    printf("origin memory info: host %f, dma %f, total %f\n", host_mem, dma_mem, tot_mem);
+    printf("origin memory info(dumpsys/dmabuf_dump): host %f, dma %f, total %f\n", host_mem, dma_mem, tot_mem);
     const float max_diff_size = 30;
     auto fp = std::unique_ptr<FILE, decltype(&fclose)>{fopen(file_name, "re"), fclose};
     if (fp == nullptr) {
@@ -61,7 +61,11 @@ bool verify_memory_info(const char* file_name, float host_mem, float dma_mem, fl
 
     double diff_host_mem = std::fabs(re_host_mem - host_mem);
     double diff_dma_mem = std::fabs(re_dma_mem - dma_mem);
-    printf("regex memory info: host %f, dma %f, total %f\n", re_host_mem, re_dma_mem, re_tot_mem);
+    printf("regex memory info(from trace file): host %f, dma %f, total %f\n", re_host_mem, re_dma_mem, re_tot_mem);
+    if ((diff_host_mem > max_diff_size) || (diff_dma_mem > max_diff_size)){
+        printf("[error] diff_host_mem %f, diff_dma_mem %f, diff threshold %f \n",
+               diff_host_mem, diff_dma_mem, max_diff_size);
+    }
 
     return diff_host_mem < max_diff_size && diff_dma_mem < max_diff_size;
 }
@@ -89,6 +93,9 @@ void parse_dump_info(std::vector<float*> val, const char* command) {
     free(line);
 }
 
+/**
+ * get memory info from dumpsys meminfo and dmabuf_dump
+*/
 void parse_memory_info(float* host, float* dma, float* mmap, float* total) {
     char command[256];
     sprintf(command, "dumpsys meminfo %d | awk '/Native Heap:/ {print $3} /Graphics:/ {print $2} "
@@ -105,10 +112,12 @@ void check_memory_info() {
     auto checkpoint = (checkpoint_func)dlsym(RTLD_DEFAULT, "checkpoint");
     ASSERT(checkpoint == nullptr, "pre-load liballoc_host.so failed\n");
     std::filesystem::path filePath = "/data/local/tmp/trace/memory_alloc_test.txt";
+    // get meminfo with android system cmd
     float host_mem = 0.f, dma_mem = 0.f, mmap_mem = 0.f, total_mem = 0.f;
-
+    // checkpoint dump trace
     checkpoint(filePath.c_str());
     Checker::parse_memory_info(&host_mem, &dma_mem, &mmap_mem, &total_mem);
+    // check if two ways of memory info are equal
     EXPECT_TRUE(Checker::verify_memory_info(filePath.c_str(), host_mem + mmap_mem, dma_mem, total_mem));
 }
 
