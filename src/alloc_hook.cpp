@@ -37,6 +37,7 @@ public:
     AllocHook() {
         InitState state;
         void* ptr[2] = {&Db_storage, &Pd_storage};
+        // 初始化传入 debug data 和 pointer data
         debug_initialize(ptr);
     }
     ~AllocHook() { debug_finalize(); }
@@ -78,6 +79,9 @@ AllocHook& AllocHook::inst() {
 }
 
 static volatile bool in_preinit_phase = true;
+// 该代码使用 GCC 的 __attribute__((constructor)) 特性，在程序启动时自动调用
+// mark_init_done 函数，并将其构造阶段设为 201。函数的作用是将全局变量 in_preinit_phase
+// 设为 false，表示预初始化阶段已完成。
 __attribute__((constructor(201))) void mark_init_done() {
     in_preinit_phase = false;
 }
@@ -129,6 +133,7 @@ int posix_memalign(void** ptr, size_t alignment, size_t size) {
     return AllocHook::inst().posix_memalign(ptr, alignment, size);
 }
 
+// 程序初始化时会调用 mmap, 类的构造函数如果包含内存申请，可能也会调用 mmap
 void* mmap(void* addr, size_t size, int prot, int flags, int fd, off_t offset) {
     if (in_preinit_phase || InitState::allocHook_setup) {
         return (void*)syscall(SYS_mmap, addr, size, prot, flags, fd, offset);
@@ -145,6 +150,11 @@ int munmap(void* addr, size_t size) {
 }
 
 int ioctl(int fd, int request, ...) {
+    // 这段代码用于处理可变参数列表：
+    // va_list ap; 定义一个指向可变参数的指针；
+    // va_start(ap, request); 初始化指针，request是最后一个固定参数；
+    // void* arg = va_arg(ap, void*); 获取下一个参数（类型为void*）；
+    // va_end(ap); 清理参数指针。
     va_list ap;
     va_start(ap, request);
     void* arg = va_arg(ap, void*);
@@ -157,6 +167,19 @@ int close(int fd) {
     return AllocHook::inst().close(fd);
 }
 
+/*
+参数类型：
+
+mmap 使用 off_t 类型表示偏移量，通常是 32 位，在某些系统上可能不支持大文件。
+mmap64 使用 off64_t 类型表示偏移量，明确为 64 位，支持大于 2GB 的文件。
+兼容性：
+
+在 64 位系统上，mmap 和 mmap64 通常等价，因为 off_t 默认是 64 位。
+在 32 位系统上，mmap64 是必要的，以支持大文件映射。
+POSIX 标准：
+
+mmap64 是 POSIX 指定的扩展接口，用于确保跨平台的大文件支持。
+*/
 void* mmap64(void* addr, size_t size, int prot, int flags, int fd, off_t offset) {
     if (in_preinit_phase || InitState::allocHook_setup) {
         return (void*)syscall(SYS_mmap, addr, size, prot, flags, fd, offset);

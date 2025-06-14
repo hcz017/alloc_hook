@@ -24,9 +24,12 @@
 
 class ScopedConcurrentLock {
 public:
+    // 构造时加读锁
     ScopedConcurrentLock() { pthread_rwlock_rdlock(&lock_); }
+    // 析构是解锁
     ~ScopedConcurrentLock() { pthread_rwlock_unlock(&lock_); }
 
+    // 初始化读写锁
     static void Init() {
         pthread_rwlockattr_t attr;
         // Set the attribute so that when a write lock is pending, read locks are no
@@ -38,9 +41,11 @@ public:
         pthread_rwlock_init(&lock_, &attr);
     }
 
+    // 加读写锁
     static void BlockAllOperations() { pthread_rwlock_wrlock(&lock_); }
 
 private:
+    // 读写锁
     static pthread_rwlock_t lock_;
 };
 pthread_rwlock_t ScopedConcurrentLock::lock_;
@@ -62,14 +67,17 @@ bool debug_initialize(void* init_space[]) {
     }
 
     DebugData* debug = new (init_space[0]) DebugData();
+    // pointer data 作为 debug data 的初始化函数
     if (!debug->Initialize(init_space[1])) {
         DebugDisableFinalize();
         return false;
     }
     g_debug = debug;
 
+    // 初始化竞争锁
     ScopedConcurrentLock::Init();
 
+    // 如果开启 DUMP_ON_SIGNAL
     if (g_debug->config().options() & DUMP_ON_SIGNAL) {
         struct sigaction enable_act = {};
         enable_act.sa_handler = singal_dump_heap;
@@ -104,6 +112,7 @@ void debug_finalize() {
                                 .c_str());
     }
 
+    // 退出时 dump 峰值内存
     if (g_debug->TrackPointers()) {
         g_debug->pointer->DumpPeakInfo();
     }
@@ -330,17 +339,17 @@ static bool handle_dma_node(unsigned int request, void* arg, int* fd, size_t* si
     };
 
     switch (request) {
-        case KBASE_IOCTL_MEM_ALLOC:
-        case KBASE_IOCTL_MEM_ALLOC_EX:
-        case IOCTL_KGSL_GPUOBJ_ALLOC:
+        case KBASE_IOCTL_MEM_ALLOC:     // Mali GPU 分配
+        case KBASE_IOCTL_MEM_ALLOC_EX:  // Mali GPU 分配
+        case IOCTL_KGSL_GPUOBJ_ALLOC:   // Qualcomm Adreno GPU 分配
             return set_gpu_ioctl_alloc_and_return_false();
         // parse the backtrace immediately
-        case DMA_HEAP_IOCTL_ALLOC: {
+        case DMA_HEAP_IOCTL_ALLOC: {  // DMA 堆分配
                 struct dma_heap_allocation_data* heap = (struct dma_heap_allocation_data*)arg;
                 *fd = heap->fd;
             }
             return is_dma_buf(*fd, size);
-        case CAM_MEM_ION_MAP_PA: {
+        case CAM_MEM_ION_MAP_PA: { // MediaTek 相机分配
                 struct CAM_MEM_DEV_ION_NODE_STRUCT* heap = (struct CAM_MEM_DEV_ION_NODE_STRUCT*)arg;
                 *fd = heap->memID;
             }

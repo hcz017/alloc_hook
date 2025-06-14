@@ -240,6 +240,7 @@ void PointerData::DumpLiveToFile(int fd) {
     std::lock_guard<std::mutex> frame_guard(frame_mutex_);
 
     std::vector<ListInfoType> list = std::move(peak_list_);
+    // 如果没有开启记录峰值，获取所有指针的 backtrace，即打印还没有释放的指针的backtrace
     if (!(g_debug->config().options() & RECORD_MEMORY_PEAK)) {
         list.clear();
         // Sort by the time of the allocation.
@@ -289,6 +290,7 @@ void PointerData::DumpLiveToFile(int fd) {
                 "alloc_time:%s.%zu\n",
                 info.size / 1024.0, mtype[info.mem_type], info.num_allocations,
                 formatted_time, info.alloc_time.tv_usec / 1000);
+        // backtrace
         for (size_t i = 0; i < info.backtrace_info->size(); ++i) {
             const unwindstack::FrameData* frame = &info.backtrace_info->at(i);
             auto map_info = frame->map_info;
