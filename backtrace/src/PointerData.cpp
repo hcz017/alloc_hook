@@ -254,6 +254,13 @@ void PointerData::DumpLiveToFile(int fd) {
         it.mem_type == DMA ? dma_use += bt_size : host_use += bt_size;
     }
 
+    dprintf(fd,
+        "host peak used: %fMB, dma peak used %fMB, total peak used: %fMB\n",
+           peak_host_ / 1024.0 / 1024.0, peak_dma_ / 1024.0 / 1024.0,
+           peak_tot_ / 1024.0 / 1024.0);
+    dprintf(fd,
+            "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+            "+++++++++++++++\n\n");
     if (!(g_debug->config().options() & RECORD_MEMORY_PEAK)) {
         dprintf(fd,
                 "current host used: %fMB, current dma used %fMB, current total used: "
